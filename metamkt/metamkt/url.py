@@ -12,7 +12,7 @@ def formActionURI(request, actionName):
     return route_url('action', request, action=actionName)
 
 def formLeagueURI(request, leagueName):
-    return route_url('league', request, group=leagueName.replace(' ', '_'))
+    return route_url('group', request, group=leagueName.replace(' ', '_'))
 
 def formTeamURI(request, teamName):
     return route_url('team', request, team=teamName.replace(' ', '_'))

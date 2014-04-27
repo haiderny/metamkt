@@ -26,15 +26,19 @@ baseUrl = 'http://localhost:6543/'
 entityTypeUrl1 = baseUrl+"entity_types/team"
 entityTypeUrl2 = baseUrl+"entity_types/player"
 actionUrl = baseUrl+"actions/ScoredGoal"
-groupUrl = baseUrl+"leagues/EPL"
+groupUrl = baseUrl+"groups/EPL"
 userUrl = baseUrl+"users/vishakh"
 teamUrl = baseUrl+"teams/Liverpool"
 playerUrl = baseUrl+"players/MichaelOwen"
-eventUrl = baseUrl+"events/SomethingHappened"
+eventsUrl = baseUrl+"events"
+eventUrl = eventsUrl
+ordersUrl = baseUrl+"orders"
+orderUrl = ordersUrl
 
-all_out = True
+get_and_put = True
+delete = False
 
-if all_out:
+if get_and_put:
     thePayload = None
     theUrl = entityTypeUrl1
     query('PUT', theUrl, thePayload)
@@ -77,10 +81,30 @@ if all_out:
     response = json.loads(query('GET', theUrl))
     playerID = response['player']['id']
 
-query('DELETE', playerUrl)
-query('DELETE', teamUrl)
-query('DELETE', actionUrl)
-query('DELETE', groupUrl)
-query('DELETE', userUrl)
-query('DELETE', entityTypeUrl2)
-query('DELETE', entityTypeUrl1)
+    thePayload = {'entity_id': playerID, 'action_id': actionID, 'quantity': 1, 'description': 'Something happened!'}
+    theUrl = eventsUrl
+    response = json.loads(query('PUT', theUrl, thePayload))
+    eventID = response['event']['id']
+    theUrl = eventUrl + "/" + str(eventID)
+    response = json.loads(query('GET', theUrl))
+    eventUrl = theUrl
+
+    thePayload = {'user_id': userID, 'entity_id': playerID, 'action_id': actionID, 'quantity': 1,
+                  'minPrice': 0, 'maxPrice': 1000, 'buyOrSell': 'buy'}
+    theUrl = ordersUrl
+    response = json.loads(query('PUT', theUrl, thePayload))
+    orderID = response['order']['id']
+    theUrl = ordersUrl + "/" + str(orderID)
+    response = json.loads(query('GET', theUrl))
+    orderUrl = theUrl
+
+if delete:
+    query('DELETE', orderUrl)
+    query('DELETE', eventUrl)
+    query('DELETE', playerUrl)
+    query('DELETE', teamUrl)
+    query('DELETE', actionUrl)
+    query('DELETE', groupUrl)
+    query('DELETE', userUrl)
+    query('DELETE', entityTypeUrl2)
+    query('DELETE', entityTypeUrl1)

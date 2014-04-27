@@ -48,6 +48,11 @@ def decodeEntityType(request, dbsession, entity_type):
     return {'id': entity_type.id, 'name': entity_type.name}
 
 
+#SQLAlchemy event object ==> Dict
+def decodeEvent(request, dbsession, event):
+    return {'id': event.id, 'hash': event.hash, 'entity_id': event.entity_id, 'action_id': event.action_id,
+            'quantity': event.quantity, 'description': event.description}
+
 #SQLAlchemy order list ==> List of dicts
 def decodeOrderList(request, dbsession, players):
     orderList = []

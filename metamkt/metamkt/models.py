@@ -41,6 +41,7 @@ class Entity(Base):
 class Event(Base):
     __tablename__ = 'event'
     id = Column(Integer, primary_key=True)
+    hash = Column(Text, unique=True)
     entity_id = Column(Integer, ForeignKey('entity.id'))
     action_id = Column(Integer, ForeignKey('action.id'))
     quantity = Column(Integer)
@@ -61,8 +62,9 @@ class Order(Base):
     quantity = Column(Integer)
     minPrice = Column(Numeric)
     maxPrice = Column(Numeric)
-    buyOrSell = Column(Text, unique=True)
+    buyOrSell = Column(Text)
     active = Column(Integer)
+    hash = Column(Text, unique=True)
     timestamp = Column(TIMESTAMP)
 
 class Points(Base):

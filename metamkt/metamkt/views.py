@@ -1,5 +1,6 @@
 from cornice import Service
 import datetime
+import hashlib
 import transaction
 
 import convert
@@ -12,8 +13,11 @@ root = Service(name='index', path='/', description="Metamkt")
 
 action = Service(name='action', path='/actions/{action}', description="Action")
 entity_type = Service(name="entity_type", path="/entity_types/{entity_type}", description="Entity Type")
-event = Service(name='event', path='/events/{event}', description="Action")
-league = Service(name='league', path='/leagues/{group}', description="League")
+events = Service(name='events', path='/events', description="All Events")
+event1 = Service(name='event', path='/events/{event}', description="Event")
+group1 = Service(name='group', path='/groups/{group}', description="Group")
+orders = Service(name='orders', path='/orders', description="All Orders")
+order = Service(name='order', path='/orders/{order}', description="Order")
 player = Service(name="player", path="/players/{player}", description="Player")
 team = Service(name="team", path="/teams/{team}", description="Team")
 user = Service(name='user', path='/users/{user}', description="User")
@@ -87,40 +91,44 @@ def entity_type_put(request):
     return {'status': 'success'}
 
 
-@event.delete()
+@event1.delete()
 def event_delete(request):
     dbsession = DBSession()
-    name = clean_matchdict_value(request, 'event')
-    event = dbsession.query(Event).filter(Event.name == name).one()
+    id = clean_matchdict_value(request, 'event')
+    event = dbsession.query(Event).filter(Event.id == id).one()
     dbsession.delete(event)
     transaction.commit()
     return {'status': 'success'}
 
 
-@event.get()
+@event1.get()
 def event_get(request):
     dbsession = DBSession()
-    name = clean_matchdict_value(request, 'event')
-    event = dbsession.query(Event).filter(Event.name == name).one()
+    id = clean_matchdict_value(request, 'event')
+    event = dbsession.query(Event).filter(Event.id == id).one()
     event_json = convert.decodeEvent(request, dbsession, event)
     return {'status': 'success', 'event': event_json}
 
 
-@event.put()
+@events.put()
 def event(request):
     dbsession = DBSession()
-    name = clean_matchdict_value(request, 'event')
     event = Event()
-    event.entity_id = name
+    event.entity_id = clean_param_value(request, 'entity_id')
     event.action_id = clean_param_value(request, 'action_id')
     event.quantity = clean_param_value(request, 'quantity')
     event.description = clean_param_value(request, 'description')
     event.timestamp = get_timestamp()
+    hash = hashlib.md5(event.entity_id + event.action_id + event.quantity + str(event.timestamp))\
+        .hexdigest()
+    event.hash = hash
     dbsession.add(event)
     transaction.commit()
-    return {'status': 'success'}
+    event = dbsession.query(Event).filter(Event.hash == hash).one()
+    event_json = convert.decodeEvent(request, dbsession, event)
+    return {'status': 'success', 'event': event_json}
 
-@league.delete()
+@group1.delete()
 def group_delete(request):
     dbsession = DBSession()
     name = clean_matchdict_value(request, 'group')
@@ -130,7 +138,7 @@ def group_delete(request):
     return {'status': 'success'}
 
 
-@league.get()
+@group1.get()
 def group_get(request):
     dbsession = DBSession()
     name = clean_matchdict_value(request, 'group')
@@ -139,7 +147,7 @@ def group_get(request):
     return {'status': 'success', 'group': group_json}
 
 
-@league.put()
+@group1.put()
 def group(request):
     dbsession = DBSession()
     name = clean_matchdict_value(request, 'group')
@@ -149,6 +157,46 @@ def group(request):
     dbsession.add(group)
     transaction.commit()
     return {'status': 'success'}
+
+
+@order.delete()
+def order_delete(request):
+    dbsession = DBSession()
+    name = clean_matchdict_value(request, 'order')
+    order = dbsession.query(Order).filter(Order.id == id).one()
+    dbsession.delete(order)
+    transaction.commit()
+    return {'status': 'success'}
+
+
+@order.get()
+def order_get(request):
+    dbsession = DBSession()
+    id = clean_matchdict_value(request, 'order')
+    order = dbsession.query(Order).filter(Order.id == id).one()
+    order_json = convert.decodeOrder(request, dbsession, order)
+    return {'status': 'success', 'order': order_json}
+
+
+@orders.put()
+def orders_put(request):
+    dbsession = DBSession()
+    order = Order()
+    order.entity_id = clean_param_value(request, 'entity_id')
+    order.user_id = clean_param_value(request, 'user_id')
+    order.quantity = clean_param_value(request, 'quantity')
+    order.minPrice = clean_param_value(request, 'minPrice')
+    order.maxPrice = clean_param_value(request, 'maxPrice')
+    order.buyOrSell = clean_param_value(request, 'buyOrSell')
+    order.active = 1
+    order.timestamp = get_timestamp()
+    hash = hashlib.md5(order.entity_id + order.user_id + str(order.timestamp)).hexdigest()
+    order.hash = hash
+    dbsession.add(order)
+    transaction.commit()
+    order = dbsession.query(Order).filter(Order.hash == hash).one()
+    order_json = convert.decodeOrder(request, dbsession, order)
+    return {'status': 'success', 'order': order_json}
 
 
 @player.delete()

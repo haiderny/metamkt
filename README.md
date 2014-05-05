@@ -1,6 +1,6 @@
 metamkt
 =======
 
-A RESTful framework for running fantasy markets.
+A RESTful framework using Pyramid/Cornice for running fantasy markets.
 
-Work in progress. Real commits coming soon.
+Work in progress!

@@ -1,5 +1,7 @@
+from sqlalchemy import Boolean
 from sqlalchemy import Column
 from sqlalchemy import ForeignKey
+from sqlalchemy import func
 from sqlalchemy import Integer
 from sqlalchemy import Numeric
 from sqlalchemy import Text
@@ -14,19 +16,22 @@ DBSession = scoped_session(sessionmaker(extension=ZopeTransactionExtension()))
 
 Base = declarative_base()
 
+
 class Action(Base):
     __tablename__ = 'action'
     id = Column(Integer, primary_key=True)
     name = Column(Text, unique=True)
     description = Column(Text, unique=True)
     points = Column(Integer)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class EntityType(Base):
     __tablename__ = 'entitytype'
     id = Column(Integer, primary_key=True)
     name = Column(Text, unique=True)
     timestamp = Column(TIMESTAMP)
+
 
 class Entity(Base):
     __tablename__ = 'entity'
@@ -36,7 +41,9 @@ class Entity(Base):
     group_id = Column(Integer, ForeignKey('group.id'))
     parent_id = Column(Integer, ForeignKey('entity.id'))
     price = Column(Numeric)
-    timestamp = Column(TIMESTAMP)
+    touched = Column(Boolean)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class Event(Base):
     __tablename__ = 'event'
@@ -46,13 +53,15 @@ class Event(Base):
     action_id = Column(Integer, ForeignKey('action.id'))
     quantity = Column(Integer)
     description = Column(Text)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class Group(Base):
     __tablename__ = 'group'
     id = Column(Integer, primary_key=True)
     name = Column(Text, unique=True)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class Order(Base):
     __tablename__ = 'orders'
@@ -65,7 +74,8 @@ class Order(Base):
     buyOrSell = Column(Text)
     active = Column(Integer)
     hash = Column(Text, unique=True)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class Points(Base):
     __tablename__ = 'points'
@@ -73,7 +83,8 @@ class Points(Base):
     user_id = Column(Integer, ForeignKey('user.id'))
     event_id = Column(Integer, ForeignKey('entity.id'))
     amount = Column(Integer)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class PointsChange(Base):
     __tablename__ = 'pointschange'
@@ -81,7 +92,8 @@ class PointsChange(Base):
     user_id = Column(Integer, ForeignKey('user.id'))
     term = Column(Text)
     value = Column(Numeric)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class PriceChange(Base):
     __tablename__ = 'pricechange'
@@ -89,7 +101,16 @@ class PriceChange(Base):
     entity_id = Column(Integer, ForeignKey('entity.id'))
     term = Column(Text)
     value = Column(Numeric)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
+
+class PriceHistory(Base):
+    __tablename__ = 'pricehistory'
+    id = Column(Integer, primary_key=True)
+    entity_id = Column(Integer, ForeignKey('entity.id'))
+    price = Column(Numeric)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class Shares(Base):
     __tablename__ = 'shares'
@@ -101,7 +122,8 @@ class Shares(Base):
     active = Column(Integer)
     startTime = Column(TIMESTAMP)
     endTime = Column(TIMESTAMP)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class Transaction(Base):
     __tablename__ = 'transaction'
@@ -113,7 +135,8 @@ class Transaction(Base):
     price = Column(Numeric)
     buy_order_id = Column(Integer, ForeignKey('orders.id'))
     sell_order_id = Column(Integer, ForeignKey('orders.id'))
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class User(Base):
     __tablename__ = 'user'
@@ -125,7 +148,8 @@ class User(Base):
     cash = Column(Numeric)
     value = Column(Numeric)
     points = Column(Integer)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 class ValueChange(Base):
     __tablename__ = 'valuechange'
@@ -133,7 +157,8 @@ class ValueChange(Base):
     user_id = Column(Integer, ForeignKey('user.id'))
     term = Column(Text)
     value = Column(Numeric)
-    timestamp = Column(TIMESTAMP)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
 
 def initialize_sql(engine):
     DBSession.configure(bind=engine)
@@ -143,8 +168,9 @@ def initialize_sql(engine):
 from pyramid.security import Allow
 from pyramid.security import Everyone
 
+
 class RootFactory(object):
-    __acl__ = [ (Allow, Everyone, 'view'),
-                (Allow, 'group:editors', 'edit') ]
+    __acl__ = [(Allow, Everyone, 'view'), (Allow, 'group:editors', 'edit')]
+
     def __init__(self, request):
         pass

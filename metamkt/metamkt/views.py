@@ -227,6 +227,7 @@ def player_put(request):
     entity.group_id = clean_param_value(request, 'group_id')
     entity.parent_id = clean_param_value(request, 'parent_id')
     entity.price = 0
+    entity.touched = True
     entity.timestamp = get_timestamp()
     dbsession.add(entity)
     transaction.commit()
@@ -261,6 +262,7 @@ def team_put(request):
     entity.group_id = clean_param_value(request, 'group_id')
     entity.parent_id = None
     entity.price = 0
+    entity.touched = True
     entity.timestamp = get_timestamp()
     dbsession.add(entity)
     transaction.commit()

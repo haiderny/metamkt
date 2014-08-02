@@ -226,8 +226,8 @@ def player_put(request):
     entity.entityType_id = getPlayerTypeID()
     entity.group_id = clean_param_value(request, 'group_id')
     entity.parent_id = clean_param_value(request, 'parent_id')
-    entity.price = 0
-    entity.touched = True
+    entity.price = 100
+    entity.touched = False
     entity.timestamp = get_timestamp()
     dbsession.add(entity)
     transaction.commit()
@@ -261,8 +261,8 @@ def team_put(request):
     entity.entityType_id = getTeamTypeID()
     entity.group_id = clean_param_value(request, 'group_id')
     entity.parent_id = None
-    entity.price = 0
-    entity.touched = True
+    entity.price = 100
+    entity.touched = False
     entity.timestamp = get_timestamp()
     dbsession.add(entity)
     transaction.commit()
@@ -298,6 +298,7 @@ def user_put(request):
     user.salt = 'salt'
     user.password = 'password'
     user.cash = 10000
+    user.timestamp = get_timestamp()
     dbsession.add(user)
     transaction.commit()
     return {'status': 'success'}

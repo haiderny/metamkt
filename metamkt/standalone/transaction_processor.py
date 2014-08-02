@@ -1,224 +1,286 @@
+# Polls for buy orders from users and attempts to satisfy them with matching sell orders or free shares.
+
 import common
 import logging
-import MySQLdb
 import time
 from decimal import *
 
-def findFairPrice(minBuyPrice, maxBuyPrice, minSellPrice, maxSellPrice):
-    points = [minBuyPrice, maxBuyPrice, minSellPrice, maxSellPrice]
+
+# Given the minimum and maximum desired price of buyer and seller,
+# establish fair price at which a transaction should be conducted.
+def find_fair_price(min_buy_price, max_buy_price, min_sell_price, max_sell_price):
+    points = [min_buy_price, max_buy_price, min_sell_price, max_sell_price]
     points.sort()
     return (points[1] + points[2]) / Decimal(2.0) 
 
-def checkBuyerHasCash(cursor, user_id, cashNeeded):
-    sql = """select cash from user where id=%s"""%user_id
+
+# For a given user, get total cash balance.
+def get_user_cash(cursor, user_id):
+    sql = """select cash from user where id=%s""" % user_id
     cursor.execute(sql)
     res = cursor.fetchone()
-    buyersCash = res[0]
-    if(buyersCash < cashNeeded): return -1
-    return buyersCash
+    user_cash = res[0]
+    return user_cash
 
-def deductSellerShares(cursor, seller_id, entity_id, transQty):
-    sql = """select id, quantity, cost from shares where user_id=%s and entity_id=%s and active!=0 order by quantity asc"""%(seller_id, entity_id)
+
+# Deduct a user's shares of an entity by a given transaction quantity.
+def deduct_user_shares(cursor, user_id, entity_id, trans_qty):
+    # Get all active holdings of the entity by the user.
+    sql = """select id, quantity, cost from shares
+          where user_id=%s and entity_id=%s and active!=0
+          order by quantity asc""" % (user_id, entity_id)
     cursor.execute(sql)
     shares = cursor.fetchall()
     for share in shares:
-        logging.debug("%s seller shares left to deduct."%transQty)
-        if transQty==0: continue
-        shareID = share[0]
-        shareQty = share[1]
-        shareCost = share[2]
-        if shareQty <= transQty:
-            sql = """UPDATE shares set endTime=now(), active=0 where id=%s"""%shareID
+        # For each holding, deduct shares as appropriate.
+        logging.debug("%s seller shares left to deduct." % trans_qty)
+        if trans_qty == 0:
+            continue
+        share_id = share[0]
+        share_qty = share[1]
+        share_cost = share[2]
+        if share_qty <= trans_qty:
+            # Deduct current holding if less than transaction quantity.
+            sql = """UPDATE shares set endTime=now(), active=0 where id=%s""" % share_id
             cursor.execute(sql)
-            transQty = transQty - shareQty
-            logging.debug("Deducting shares with ID %s"%shareID)
+            trans_qty = trans_qty - share_qty
+            logging.debug("Deducting shares with ID %s" % share_id)
         else:
-            remainder = shareQty - transQty
+            # Break up holding if more than required transaction quantity.
+            # First, create new holding with remaining shares..
+            remainder = share_qty - trans_qty
             sql = """INSERT into shares (user_id, entity_id, quantity, cost, startTime, endTime, active) 
-                    VALUES (%s, %s, %s, %s, now(), '0000-00-00 00:00:00', 1)"""%(seller_id, entity_id, remainder, shareCost)
-            logging.debug("Adding shares with quantity %s.."%remainder)
+                    VALUES (%s, %s, %s, %s, now(), '0000-00-00 00:00:00', 1)"""\
+                  % (user_id, entity_id, remainder, share_cost)
+            logging.debug("Adding shares with quantity %s.." % remainder)
             cursor.execute(sql)
-            sql = """UPDATE shares set active=0 where id=%s"""%shareID
-            logging.debug("..and making shares with ID %s inactive."%shareID)
+            # ..now remove the existing holding.
+            sql = """UPDATE shares set active=0 where id=%s""" % share_id
+            logging.debug("..and making shares with ID %s inactive." % share_id)
             cursor.execute(sql)
-            transQty = 0
+            trans_qty = 0
     return True
 
-logging.basicConfig(level=logging.DEBUG)
-conn = common.getConnection()
-cursor = conn.cursor()
 
-while True:
-    cursor.execute ("SELECT id, entity_id, user_id, quantity, minPrice, maxPrice FROM soccermkt.orders where buyOrSell='buy' and quantity>0")
-    buyRows = cursor.fetchall()
-    for buyRow in buyRows:
-        id =        buyRow[0]
+# Attempts to satisfy a buy order with sell orders.
+def match_buy_with_sells(cursor, user_id, entity_id, buy_id, buy_min_price, buy_max_price, buy_quantity):
+    cursor.execute("""SELECT id, entity_id, user_id, quantity, minPrice, maxPrice FROM orders
+                                WHERE buyOrSell='sell'
+                                and (((minPrice >= %s and minPrice <=%s) or (maxPrice >=%s and maxPrice <=%s))
+                                or ((%s >= minPrice and %s <=maxPrice) or (%s >=minPrice and %s <=maxPrice)) )
+                                and entity_id=%s and quantity>0
+                                ORDER BY timestamp ASC, quantity DESC"""
+                   % (buy_min_price, buy_max_price, buy_min_price, buy_max_price, buy_min_price, buy_min_price,
+                      buy_max_price, buy_max_price, entity_id))
+    sell_rows = cursor.fetchall()
+    logging.debug("Found %s possible sellers" % len(sell_rows))
+    for sellRow in sell_rows:
+        if buy_quantity == 0:
+            break
+        trans_quantity = 0
+        sell_id = sellRow[0]
+        sell_user_id = sellRow[2]
+        sell_quantity = sellRow[3]
+        sell_min_price = sellRow[4]
+        sell_max_price = sellRow[5]
+
+        logging.debug("Trying order %s by seller %s" % (sell_id, sell_user_id))
+
+        #Determine transaction quantity and price
+        if sell_quantity >= buy_quantity:
+            trans_quantity = buy_quantity
+            sell_quantity = sell_quantity - buy_quantity
+            buy_quantity = 0
+        elif buy_quantity >= sell_quantity:
+            trans_quantity = sell_quantity
+            buy_quantity = buy_quantity - sell_quantity
+            sell_quantity = 0
+        else:
+            trans_quantity = buy_quantity
+            buy_quantity = 0
+            sell_quantity = 0
+        trans_price = find_fair_price(buy_min_price, buy_max_price, sell_min_price, sell_max_price)
+        logging.debug("Established price of %s for %s shares." % (trans_price, trans_quantity))
+
+        #Check whether seller has enough shares
+        sql = """select sum(quantity) from shares where user_id=%s and entity_id=%s""" % (sell_user_id, entity_id)
+        cursor.execute(sql)
+        res = cursor.fetchone()
+        shares_owned_by_seller = res[0]
+        if shares_owned_by_seller < trans_quantity:
+            logging.debug("Seller does not have enough shares.")
+            continue
+
+        #Check whether buyer has enough cash.
+        transaction_cost = trans_quantity * trans_price
+        buyers_cash = get_user_cash(cursor, user_id)
+        if buyers_cash < transaction_cost:
+            logging.debug("Buyer does not have enough cash.")
+            continue
+
+        # Debit transaction amount from buyer.
+        buyers_balance = buyers_cash - transaction_cost
+        sql = """UPDATE user set cash=%s where id=%s""" % (buyers_balance, user_id)
+        cursor.execute(sql)
+        logging.debug("Deducted %s from buyer." % trans_price)
+
+        # Credit transaction amount to seller
+        sql = "UPDATE user set cash=cash+%s where id=%s" % (transaction_cost, sell_user_id)
+        cursor.execute(sql)
+        logging.debug("Credit %s to seller." % trans_price)
+
+        #Deduct seller's shares
+        deduct_user_shares(cursor, sell_user_id, entity_id, trans_quantity)
+
+        #Credit shares to buyer
+        sql = """INSERT into shares (user_id, entity_id, quantity, cost, startTime, endTime)
+                        VALUES (%s, %s, %s, %s, now(), '0000-00-00 00:00:00')""" % \
+              (user_id, entity_id, trans_quantity, trans_price)
+        cursor.execute(sql)
+
+        #Add transaction record
+        cursor.execute("""INSERT INTO transaction
+                                    (entity_id, from_user_id, to_user_id, quantity, price, buy_order_id, sell_order_id)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s)""" %
+                       (entity_id, sell_user_id, user_id, trans_quantity, trans_price, buy_id, sell_id))
+
+        #Update buy and sell order quantities
+        cursor.execute("""UPDATE orders set quantity=%s where id=%s""" % (sell_quantity, sell_id))
+        cursor.execute("""UPDATE orders set quantity=%s where id=%s""" % (buy_quantity, buy_id))
+
+        #If sell order has zero quantity, close it.
+        if sell_quantity <= 0:
+            sql = "UPDATE orders set active=0 where id=%s" % sell_id
+            cursor.execute(sql)
+            logging.debug("Closing order %s as no shares are left to be sold." % sell_id)
+
+        logging.info('Executed transaction. User %s bought %s shares of %s from %s' %
+                     (user_id, trans_quantity, entity_id, sell_user_id))
+
+    return buy_quantity
+
+
+# Attempts to satisfy a given buy order with unowned shares.
+def match_buy_with_free_shares(cursor, buy_id, entity_id, user_id, buy_min_price, buy_max_price, buy_quantity):
+    stmt = """select id, quantity, cost from shares where entity_id=%s
+                                 and user_id is null
+                                 and cost>=%s and cost<=%s order by quantity asc""" % \
+           (entity_id, buy_min_price, buy_max_price)
+    cursor.execute(stmt)
+    free_shares = cursor.fetchall()
+    logging.debug("Found %s possible free share rows." % len(free_shares))
+    for freeShareRow in free_shares:
+        if buy_quantity == 0:
+            break
+        trans_quantity = 0
+        free_share_id = freeShareRow[0]
+        free_share_qty = freeShareRow[1]
+        free_share_cost = freeShareRow[2]
+        logging.debug(
+            "\t%s: Trying to match with %s free shares at cost %s" % (free_share_id, free_share_qty, free_share_cost))
+
+        if free_share_qty >= buy_quantity:
+            trans_quantity = buy_quantity
+            free_share_qty = free_share_qty - buy_quantity
+            buy_quantity = 0
+        elif buy_quantity >= free_share_qty:
+            trans_quantity = free_share_qty
+            buy_quantity = buy_quantity - free_share_qty
+            free_share_qty = 0
+        else:
+            trans_quantity = buy_quantity
+            buy_quantity = 0
+            free_share_qty = 0
+        trans_price = free_share_cost
+        logging.debug("Established price of %s for %s shares." % (trans_price, trans_quantity))
+
+        #Check whether buyer has enough cash. If yes, deduct purchase amount from buyer.
+        transaction_cost = trans_quantity * trans_price
+        buyers_cash = get_user_cash(cursor, user_id)
+        if buyers_cash < transaction_cost:
+            logging.debug("Buyer does not have enough cash.")
+            continue
+        buyers_balance = buyers_cash - transaction_cost
+        sql = """UPDATE user set cash=%s where id=%s""" % (buyers_balance, user_id)
+        cursor.execute(sql)
+        logging.debug("Deducted %s from buyer." % trans_price)
+
+        #Add transaction record
+        cursor.execute("""INSERT INTO transaction
+                                (entity_id, from_user_id, to_user_id, quantity, price, buy_order_id, sell_order_id)
+                                VALUES (%s, null, %s, %s, %s, %s, null)""" % (
+            entity_id, user_id, trans_quantity, trans_price, buy_id))
+
+        #Update purchase order
+        cursor.execute("""UPDATE orders set quantity=%s where id=%s""" % (buy_quantity, buy_id))
+
+        #Update free share quantity
+        cursor.execute("""UPDATE shares set quantity=%s where id=%s""" % (free_share_qty, free_share_id))
+
+        #Credit shares to buyer
+        cursor.execute("""INSERT INTO shares
+                                (user_id, entity_id, quantity, startTime, endTime, cost)
+                                VALUES (%s, %s, %s, now(), '0000-00-00 00:00:00', %s)""" % (
+            user_id, entity_id, trans_quantity, trans_price))
+
+        logging.info(
+            'Executed transaction. User %s bought %s free shares of %s' % (user_id, trans_quantity, entity_id))
+
+    return buy_quantity
+
+
+# Runs a single iteration of transaction processing.
+def run_transaction_iteration(conn, cursor):
+    # Find all outstanding buy orders.
+    cursor.execute(
+        "SELECT id, entity_id, user_id, quantity, minPrice, maxPrice FROM orders "
+        "where buyOrSell='buy' and quantity>0")
+    buy_rows = cursor.fetchall()
+    for buyRow in buy_rows:
+        #Handle an individual buy order.
+        buy_id = buyRow[0]
         entity_id = buyRow[1]
-        user_id =   buyRow[2]
-        buyQuantity =  buyRow[3]
-        minPrice =  buyRow[4]
-        maxPrice =  buyRow[5]
-        
-        logging.debug("%s: Trying to buy %s shares of %s for %s"%(id, buyQuantity, entity_id, user_id))
-        
-        #first look for sellers
-        cursor.execute ("""SELECT id, entity_id, user_id, quantity, minPrice, maxPrice FROM soccermkt.orders 
-                            WHERE buyOrSell='sell'  
-                            and (((minPrice >= %s and minPrice <=%s) or (maxPrice >=%s and maxPrice <=%s)) 
-                            or ((%s >= minPrice and %s <=maxPrice) or (%s >=minPrice and %s <=maxPrice)) )
-                            and entity_id=%s and quantity>0
-                            ORDER BY timestamp ASC, quantity DESC"""%(minPrice, maxPrice, minPrice, maxPrice, minPrice, minPrice, maxPrice, maxPrice, entity_id))
-        sellRows = cursor.fetchall()
-        logging.debug("Found %s possible sellers"%len(sellRows))
-        for sellRow in sellRows:
-            if buyQuantity == 0: break
-            transQuantity = 0
-            sellId =        sellRow[0]
-            sellEntity_id = sellRow[1]
-            sellUser_id =   sellRow[2]
-            sellQuantity =  sellRow[3]
-            sellMinPrice =  sellRow[4]
-            sellMaxPrice =  sellRow[5]
-            
-            logging.debug("Trying order %s by seller %s"%(sellId, sellUser_id))
-                      
-            #Determine transaction quantity and price
-            if sellQuantity >= buyQuantity:
-                transQuantity = buyQuantity 
-                sellQuantity = sellQuantity - buyQuantity
-                buyQuantity = 0
-            elif buyQuantity >= sellQuantity:
-                transQuantity = sellQuantity
-                buyQuantity = buyQuantity - sellQuantity
-                sellQuantity = 0
-            else:
-                transQuantity = buyQuantity 
-                buyQuantity = 0
-                sellQuantity = 0
-            transPrice = findFairPrice(minPrice, maxPrice, sellMinPrice, sellMaxPrice)
-            print transPrice
-            logging.debug("Established price of %s for %s shares."%(transPrice, transQuantity))
-            
-            #Check whether seller has enough shares
-            sql = """select sum(quantity) from shares where user_id=%s and entity_id=%s"""%(sellUser_id, entity_id)
-            cursor.execute(sql)
-            res = cursor.fetchone()
-            sharesOwned = res[0]
-            if(sharesOwned<transQuantity): 
-                logging.debug("Seller does not have enough shares.")
-                continue
-            
-            #Check whether buyer has enough cash. If yes, deduct purchase amount from buyer.
-            transactionCost = transQuantity * transPrice
-            buyersCash = checkBuyerHasCash(cursor, user_id, transactionCost)
-            if buyersCash==-1: 
-                logging.debug("Buyer does not have enough cash.")
-                continue
-            balance = buyersCash - transactionCost
-            sql = """UPDATE user set cash=%s where id=%s"""%(balance, user_id)
-            cursor.execute(sql)
-            logging.debug("Deducted %s from buyer."%transPrice)
-            
-            #Credit transaction amount to seller
-            sql = "UPDATE user set cash=cash+%s where id=%s"%(transactionCost, sellUser_id)
-            cursor.execute(sql)
-            logging.debug("Credit %s to seller."%transPrice)
-            
-            #Deduct seller's shares
-            deductSellerShares(cursor, sellUser_id, entity_id, transQuantity)
-            
-            #Credit shares to buyer
-            sql = """INSERT into shares (user_id, entity_id, quantity, cost, startTime, endTime) 
-                    VALUES (%s, %s, %s, %s, now(), '0000-00-00 00:00:00')"""%(user_id, entity_id, transQuantity, transPrice)
-            cursor.execute(sql)
-            
-            #Add transaction record
-            cursor.execute ("""INSERT INTO soccermkt.transaction 
-                                (entity_id, from_user_id, to_user_id, quantity, price, buy_order_id, sell_order_id) 
-                                VALUES (%s, %s, %s, %s, %s, %s, %s)"""%(entity_id, sellUser_id, user_id, transQuantity, transPrice, id, sellId))
-            
-            #Update buy and sell order quantities
-            cursor.execute ("""UPDATE soccermkt.orders set quantity=%s where id=%s"""%(sellQuantity, sellId))
-            cursor.execute ("""UPDATE soccermkt.orders set quantity=%s where id=%s"""%(buyQuantity, id))
-            
-            #If sell order has zero quantity, close it.
-            if sellQuantity<=0:
-                sql = "UPDATE orders set active=0 where id=%s"%sellId
-                cursor.execute(sql)
-                logging.debug("Closing order %s as no shares are left to be sold."%sellId)
-            
-            logging.info('Executed transaction. User %s bought %s shares of %s from %s'%(user_id, transQuantity, entity_id, sellUser_id))
-            
-        #..then look for free rows    
-        stmt = """select id, quantity, cost from shares where entity_id=%s
-                             and user_id is null 
-                             and cost>=%s and cost<=%s order by quantity asc"""%(entity_id, minPrice, maxPrice)
-        #if verbose: print stmt
-        cursor.execute (stmt)
-        freeShareRows = cursor.fetchall()
-        logging.debug("Found %s possible free share rows."%len(freeShareRows))
-        for freeShareRow in freeShareRows:    
-            if buyQuantity == 0: break
-            transQuantity = 0
-            freeShareID =   freeShareRow[0]
-            freeShareQty =  freeShareRow[1]
-            freeShareCost = freeShareRow[2]
-            logging.debug("\t%s: Trying to match with %s free shares at cost %s"%(freeShareID, freeShareQty, freeShareCost))
-            
-            if freeShareQty >= buyQuantity:
-                transQuantity = buyQuantity 
-                freeShareQty = freeShareQty - buyQuantity
-                buyQuantity = 0
-            elif buyQuantity >= freeShareQty:
-                transQuantity = freeShareQty
-                buyQuantity = buyQuantity - freeShareQty
-                freeShareQty = 0
-            else:
-                transQuantity = buyQuantity 
-                buyQuantity = 0
-                freeShareQty = 0
-            transPrice = freeShareCost
-            logging.debug("Established price of %s for %s shares."%(transPrice, transQuantity))
-            
-            #Check whether buyer has enough cash. If yes, deduct purchase amount from buyer.
-            transactionCost = transQuantity * transPrice
-            buyersCash = checkBuyerHasCash(cursor, user_id, transactionCost)
-            if buyersCash==-1: 
-                logging.debug("Buyer does not have enough cash.")
-                continue
-            balance = buyersCash - transactionCost
-            sql = """UPDATE user set cash=%s where id=%s"""%(balance, user_id)
-            cursor.execute(sql)
-            logging.debug("Deducted %s from buyer."%transPrice)
-            
-            #Add transaction record
-            cursor.execute ("""INSERT INTO soccermkt.transaction 
-                            (entity_id, from_user_id, to_user_id, quantity, price, buy_order_id, sell_order_id) 
-                            VALUES (%s, null, %s, %s, %s, %s, null)"""%(entity_id, user_id, transQuantity, transPrice, id))
-            
-            #Update purchase order
-            cursor.execute ("""UPDATE soccermkt.orders set quantity=%s where id=%s"""%(buyQuantity, id))
-            
-            #Update free share quantity
-            if freeShareQty>0:
-                cursor.execute ("""UPDATE soccermkt.shares set quantity=%s where id=%s"""%(freeShareQty, freeShareID))
-            else:
-                sql = """DELETE from shares where id=%s"""%(freeShareID)
-            
-            #Credit shares to buyer
-            cursor.execute ("""INSERT INTO soccermkt.shares
-                            (user_id, entity_id, quantity, startTime, endTime, cost)
-                            VALUES (%s, %s, %s, now(), '0000-00-00 00:00:00', %s)"""%(user_id, entity_id, transQuantity, transPrice))
-            
-            logging.info('Executed transaction. User %s bought %s free shares of %s'%(user_id, transQuantity, entity_id))
-        
+        user_id = buyRow[2]
+        buy_quantity = buyRow[3]
+        buy_min_price = buyRow[4]
+        buy_max_price = buyRow[5]
+
+        logging.debug("%s: Trying to buy %s shares of %s for %s" % (buy_id, buy_quantity, entity_id, user_id))
+
+        # Try matching sell orders.
+        buy_quantity = match_buy_with_sells(cursor, user_id, entity_id, buy_id,
+                                            buy_min_price, buy_max_price, buy_quantity)
+
+        # After considering sell orders, try free shares.
+        buy_quantity = match_buy_with_free_shares(cursor, buy_id, entity_id, user_id, buy_min_price,
+                                                  buy_max_price, buy_quantity)
+
         #If the buy quantity left is now zero, close the order
-        if buyQuantity<=0:
-            sql = "UPDATE orders set active=0 where id=%s"%id
+        if buy_quantity <= 0:
+            sql = "UPDATE orders set active=0 where id=%s" % buy_id
             cursor.execute(sql)
-            logging.debug("Closing order %s as no shares are left to be bought."%id)
-    conn.commit ()
-    time.sleep(5)
-    logging.info('Sleeping for 5 seconds..')
-cursor.close ()
-conn.close()
+            logging.debug("Closing order %s as no shares are left to be bought." % buy_id)
+    conn.commit()
+
+
+# Primary method. Runs transaction processing.
+def run_transactions():
+    logging.basicConfig(level=logging.DEBUG)
+    conn = common.get_connection()
+    cursor = conn.cursor()
+    while True:
+        run_transaction_iteration(conn, cursor)
+        time.sleep(5)
+        logging.info('Sleeping for 5 seconds..')
+    cursor.close()
+    conn.close()
+
+
+def main():
+    #parser = argparse.ArgumentParser(description='Go through all active orders and process them as possible.')
+    #args = parser.parse_args()
+    run_transactions()
+
+
+if __name__ == "__main__":
+    main()

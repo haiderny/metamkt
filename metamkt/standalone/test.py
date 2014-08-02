@@ -1,6 +1,7 @@
 import json
 import requests
 import sys
+from price_calculator import calc_prices
 
 def query(http_method, url, payload=None):
     print '\n<<=====>>\n'
@@ -36,6 +37,7 @@ ordersUrl = baseUrl+"orders"
 orderUrl = ordersUrl
 
 get_and_put = True
+run_calculators = True
 delete = False
 
 if get_and_put:
@@ -97,6 +99,10 @@ if get_and_put:
     theUrl = ordersUrl + "/" + str(orderID)
     response = json.loads(query('GET', theUrl))
     orderUrl = theUrl
+
+if run_calculators:
+    print 'Calculating prices..'
+    calc_prices(False)
 
 if delete:
     query('DELETE', orderUrl)

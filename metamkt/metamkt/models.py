@@ -120,8 +120,8 @@ class Shares(Base):
     quantity = Column(Integer)
     cost = Column(Numeric)
     active = Column(Integer)
-    startTime = Column(TIMESTAMP)
-    endTime = Column(TIMESTAMP)
+    validTime = Column(TIMESTAMP)
+    invalidTime = Column(TIMESTAMP)
     timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
 
 
@@ -145,9 +145,18 @@ class User(Base):
     email = Column(Text, unique=True)
     salt = Column(Text, unique=True)
     password = Column(Text, unique=True)
+    timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
+
+
+class UserData(Base):
+    __tablename__ = 'userdata'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('user.id'))
     cash = Column(Numeric)
     value = Column(Numeric)
     points = Column(Integer)
+    validTime = Column(TIMESTAMP)
+    invalidTime = Column(TIMESTAMP)
     timestamp = Column(TIMESTAMP, default=func.utc_timestamp())
 
 

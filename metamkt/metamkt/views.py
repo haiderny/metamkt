@@ -5,7 +5,7 @@ import transaction
 
 import convert
 from models import Action, DBSession, Entity, EntityType, Event, Group, Order, PriceChange, Shares, Transaction, User, \
-    ValueChange
+    UserData, ValueChange
 
 # ********** Cornice Services ********** #
 
@@ -284,7 +284,8 @@ def user_get(request):
     dbsession = DBSession()
     name = clean_matchdict_value(request, 'user')
     user = dbsession.query(User).filter(User.name == name).one()
-    user_json = convert.decodeUser(request, dbsession, user)
+    user_data = dbsession.query(UserData).filter(UserData.user_id == user.id).one()
+    user_json = convert.decodeUser(request, dbsession, user, user_data)
     return {'status': 'success', 'user': user_json}
 
 
@@ -297,9 +298,15 @@ def user_put(request):
     user.email = request.params['email']
     user.salt = 'salt'
     user.password = 'password'
-    user.cash = 10000
     user.timestamp = get_timestamp()
     dbsession.add(user)
+    user_data = UserData()
+    user_data.user_id = user.id
+    user_data.cash = 10000
+    user_data.value = 10000
+    user_data.points = 0
+    user_data.timestamp = get_timestamp()
+    dbsession.add(user_data)
     transaction.commit()
     return {'status': 'success'}
 

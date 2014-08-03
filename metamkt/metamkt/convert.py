@@ -142,16 +142,16 @@ def decodeUserList(request, dbsession, users):
     return userList
 
 #SQLAlchemy user object ==> Dict
-def decodeUser(request, dbsession, user):
+def decodeUser(request, dbsession, user, user_data):
     shares = dbsession.query(Shares.entity_id, Shares.cost, func.sum(Shares.quantity).label('quantity')).filter(Shares.user_id == user.id).filter(Shares.active == 1).group_by(Shares.entity_id, Shares.cost).all()
     shareList = decodeShareList(request, dbsession, shares)
     ordersURL = sm_url.formUserOrdersURI(request, user.name)
     transactionsURL = sm_url.formUserTransactionsURI(request, user.name)
     valueChanges = dbsession.query(ValueChange).filter(ValueChange.user_id == user.id).all()
-    userValue = user.value
-    if user.value is None:
+    userValue = user_data.value
+    if user_data.value is None:
         userValue = 0.0
     valueChangeDict = {}
     for valueChange in valueChanges:
         valueChangeDict[valueChange.term] = float(valueChange.value)
-    return {'name': user.name, 'uri':sm_url.formUserURI(request, user.name),'value': float(userValue), 'cash': float(user.cash), 'id': user.id, 'ordersURL': ordersURL, 'transactionsURL': transactionsURL, 'shares': shareList, 'valueChanges': valueChangeDict}
+    return {'name': user.name, 'uri':sm_url.formUserURI(request, user.name),'value': float(userValue), 'cash': float(user_data.cash), 'id': user.id, 'ordersURL': ordersURL, 'transactionsURL': transactionsURL, 'shares': shareList, 'valueChanges': valueChangeDict}
